@@ -1,19 +1,18 @@
 ---
 title: "Course Project - Practical Machine Learning"
 author: "bthomas"
-date: "April 20, 2016"
-output: html_document
+date: "April 26, 2016"
+output: pdf_document
 ---
 # Background
 ## Instructions
 
 One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants.
 
-## Review criterialess 
+## Review Criteria
 The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases.
 
 ## Peer Review Portion
-
 Your submission for the Peer Review portion should consist of a link to a Github repo with your R markdown and compiled HTML file describing your analysis. Please constrain the text of the writeup to < 2000 words and the number of figures to be less than 5. It will make it easier for the graders if you submit a repo with a gh-pages branch so the HTML page can be viewed online (and you always want to make it easy on graders :-).
 Course Project Prediction Quiz Portion
 
@@ -22,30 +21,34 @@ Reproducibility
 
 Due to security concerns with the exchange of R code, your code will not be run during the evaluation by your classmates. Please be sure that if they download the repo, they will be able to view the compiled HTML version of your analysis.
 
-## Research Question
-Using attributes from belt, forearm, arm, and dumbell of the 6 Prediction Assignment Writeupless 
-
 ## Background
-
 Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
 Data
 
-The training data for this project are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+The training data for this project are available here: [Training Data](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
 
-The test data are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+The test data are available here: [Test Data](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
 
 The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment.participants,
 
 
 # Data Ingestion
-
+Data from the training and the test data sets were loaded and then preocessed using Principal Components Analysis, scaled and centered, and near zero variance was removed.
 ```{r}
 # Clean up environmnet
 rm(list=ls())
 
 library(RCurl)
 library(caret)
+library(randomForest)
+library(rpart)
+library(rpart.plot)
+library(RColorBrewer)
+library(rattle)
+library(doMC)
 
+
+registerDoMC(cores = 2)
 # set working directory to the Github folder
 setwd("~/Github/practical-machine-learning")
 
@@ -66,15 +69,17 @@ if (!file.exists("./Data/test.csv")) {
 training <- read.csv("./Data/training.csv", header = TRUE, na.strings=c("NA","NaN", " "))
 # Use a regex to find features that are of interest
 # Add user name back
-training_cols <- grepl("arm|belt|dumbell|classe|user_name", names(training), ignore.case = TRUE)
+training_cols <- grepl("arm|belt|dumbell|classe", names(training), ignore.case = TRUE)
 # Remove columns not of interest
 training <- training[training_cols]
+
 colnames_train <- colnames(training)
 
 # get test dataset
 testing <- read.csv("./Data/test.csv", header = TRUE, na.strings=c("NA","NaN", " "))
 testing_cols <- grepl("arm|belt|dumbell|classe", names(training), ignore.case = TRUE)
 testing <- testing[training_cols]
+
 
 # remove columns that are blank or DIV/0!
 # Count the number of non-NAs in each col.
@@ -98,15 +103,195 @@ training <- training[,1:length(colnames(training))]
 testing <- testing[,!(names(testing) %in% drops)]
 testing <- testing[,1:length(colnames(testing))]
 
-# Show remaining columns.
-colnames(training)
-
 # Confirm attributes between training and test are identical
 colnames_train <- names(training)
 colnames_test <- names(testing)
-all.equal(colnames_train[1:length(colnames_train)-1], colnames_test[1:length(colnames_train)-1])
+all.equal(colnames_train[1:length(colnames_train)-1], colnames_test[1:length(colnames_test)-1])
 
-# Need to check for nzv and blank columns
+
 
 ```
 
+# Build vector of TRUE/FALSE and then filter on columns that are not NZV
+# Process testing and training
+```{r]}
+training.nzvs <- nearZeroVar(training, saveMetrics=TRUE)$nzv
+training.no.nzv <- training[training.nzvs == FALSE]
+testing.nzvs <- nearZeroVar(testing, saveMetrics= TRUE)$nzv
+testing.no.nzv <- testing[testing.nzvs == FALSE]
+
+# Display observations
+dim(training.no.nzv)
+dim(testing.no.nzv)
+
+# check for columns are the same
+all.equal(names(testing.no.nzv), names(training.no.nzv))
+
+# drop columns in myTesting that do not match myTraining columns
+training <- training.no.nzv
+testing <- testing.no.nzv[-40]
+testing$classe <- "0"
+rm(training.no.nzv)
+rm(testing.no.nzv)
+all.equal(names(testing), names(training))
+
+
+```
+Data is cleaned and ready to be processed. The data is split into two data sets. 
+
+# Partition and Clean Data Set
+The data is partitioned into two sets using a 60/40 split.
+```{r}
+inTrain <- createDataPartition(y=training$classe, p=0.6, list=FALSE)
+inTraining <- training[inTrain, ]; 
+outTraining <- training[-inTrain, ]
+dim(inTraining); dim(outTraining)
+```
+
+ A Decision Tree was first explored as means to solving the problem.
+```{r}
+
+modFitDT <- rpart(classe ~ ., data=training, method="class")
+predictionsDT <- predict(modFitDT, training, type = "class")
+fancyRpartPlot(modFitDT)
+
+confusionMatrix(predictionsDT, training$classe)
+#
+#Confusion Matrix and Statistics
+
+#          Reference
+#Prediction    A    B    C    D    E
+#         A 4618  366   22  223   59
+#         B  446 2248  393  244  433
+#         C   99  662 2429  300  434
+#         D  349  296  374 2380  299
+#         E   68  225  204   69 2382
+#
+#Overall Statistics
+#                                        
+#               Accuracy : 0.7164        
+#                 95% CI : (0.71, 0.7227)
+#    No Information Rate : 0.2844        
+#    P-Value [Acc > NIR] : < 2.2e-16     
+#                                        
+#                  Kappa : 0.6423        
+# Mcnemar's Test P-Value : < 2.2e-16     
+
+#Statistics by Class:
+#
+#                    Class: A Class: B Class: C Class: D Class: E
+#Sensitivity            0.8276   0.5920   0.7098   0.7400   0.6604
+#Specificity            0.9523   0.9042   0.9077   0.9197   0.9647
+#Pos Pred Value         0.8733   0.5972   0.6190   0.6436   0.8080
+#Neg Pred Value         0.9329   0.9023   0.9367   0.9475   0.9265
+#Prevalence             0.2844   0.1935   0.1744   0.1639   0.1838
+#Detection Rate         0.2353   0.1146   0.1238   0.1213   0.1214
+#Detection Prevalence   0.2695   0.1918   0.2000   0.1885   0.1502
+#Balanced Accuracy      0.8899   0.7481   0.8088   0.8299   0.8125
+
+
+```
+The use of the Decision Tree showed only 72% accuracy in predicting. Based on the low accuracy, we are moving to the Random Forest. 
+
+Caret's Train was used with data centering & scaling along with near zero variance and principal component analysis. Preprocessing the data with PCA reduced the number of predictors to 39 and accounted for 95% of the varation.  Cross validation is used in the training control method.
+
+```{r}
+
+set.seed(987654321)
+modFit <- train(inTraining$classe ~ ., method="rf", preProcess=c("center", "scale", "nzv", "pca"), trControl=trainControl(method = "cv", number = 4), data=inTraining)
+print(modFit, digits=3)
+
+predictions <- predict(modFit, newdata=inTraining)
+print(confusionMatrix(predictions, inTraining$classe), digits=4)
+
+# Confusion Matrix and Statistics
+
+#           Reference
+# Prediction    A    B    C    D    E
+#         A 3348    0    0    0    0
+#         B    0 2279    0    0    0
+#         C    0    0 2054    0    0
+#         D    0    0    0 1930    0
+#         E    0    0    0    0 2165
+
+# Overall Statistics
+#                                      
+#               Accuracy : 1          
+#                 95% CI : (0.9997, 1)
+#    No Information Rate : 0.2843     
+#    P-Value [Acc > NIR] : < 2.2e-16  
+#                                     
+#                  Kappa : 1          
+#  Mcnemar's Test P-Value : NA         
+
+# Statistics by Class:
+
+#                     Class: A Class: B Class: C Class: D Class: E
+# Sensitivity            1.0000   1.0000   1.0000   1.0000   1.0000
+# Specificity            1.0000   1.0000   1.0000   1.0000   1.0000
+# Pos Pred Value         1.0000   1.0000   1.0000   1.0000   1.0000
+# Neg Pred Value         1.0000   1.0000   1.0000   1.0000   1.0000
+# Prevalence             0.2843   0.1935   0.1744   0.1639   0.1838
+# Detection Rate         0.2843   0.1935   0.1744   0.1639   0.1838
+# Detection Prevalence   0.2843   0.1935   0.1744   0.1639   0.1838
+# Balanced Accuracy      1.0000   1.0000   1.0000   1.0000   1.0000
+
+```
+The outTraining hold out set is now evaluated.
+```{r}
+# check the outTraining
+
+modFit <- train(outTraining$classe ~ ., method="rf", preProcess=c("center", "scale", "nzv", "pca"), trControl=trainControl(method = "cv", number = 4), data=outTraining)
+print(modFit, digits=3)
+
+predictions <- predict(modFit, newdata=outTraining)
+print(confusionMatrix(predictions, outTraining$classe), digits=4)
+
+# Confusion Matrix and Statistics
+
+#          Reference
+# Prediction    A    B    C    D    E
+#          A 2232    0    0    0    0
+#          B    0 1518    0    0    0
+#          C    0    0 1368    0    0
+#          D    0    0    0 1286    0
+#          E    0    0    0    0 1442
+
+# Overall Statistics
+
+#                Accuracy : 1
+#                  95% CI : (0.9995, 1)
+#     No Information Rate : 0.2845
+#     P-Value [Acc > NIR] : < 2.2e-16
+
+#                   Kappa : 1
+#  Mcnemar's Test P-Value : NA
+
+# Statistics by Class:
+
+#                      Class: A Class: B Class: C Class: D Class: E
+# Sensitivity            1.0000   1.0000   1.0000   1.0000   1.0000
+# Specificity            1.0000   1.0000   1.0000   1.0000   1.0000
+# Pos Pred Value         1.0000   1.0000   1.0000   1.0000   1.0000
+# Neg Pred Value         1.0000   1.0000   1.0000   1.0000   1.0000
+# Prevalence             0.2845   0.1935   0.1744   0.1639   0.1838
+# Detection Rate         0.2845   0.1935   0.1744   0.1639   0.1838
+# Detection Prevalence   0.2845   0.1935   0.1744   0.1639   0.1838
+# Balanced Accuracy      1.0000   1.0000   1.0000   1.0000   1.0000
+
+
+```
+
+Use the model to test prediction with the testing data set.
+```{r}
+
+set.seed(987654321)
+
+predictions20 <- predict(modFit, newdata=testing[-40])
+predictions20
+
+#  [1] B A A A A E D B A A B C B A E E A B B B
+#  Levels: A B C D E
+
+
+```

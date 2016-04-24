@@ -66,7 +66,7 @@ if (!file.exists("./Data/test.csv")) {
 training <- read.csv("./Data/training.csv", header = TRUE, na.strings=c("NA","NaN", " "))
 # Use a regex to find features that are of interest
 # Add user name back
-training_cols <- grepl("arm|belt|dumbell|classe|user_name", names(training), ignore.case = TRUE)
+training_cols <- grepl("arm|belt|dumbell|classe", names(training), ignore.case = TRUE)
 # Remove columns not of interest
 training <- training[training_cols]
 colnames_train <- colnames(training)
